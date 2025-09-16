@@ -244,16 +244,16 @@ resource "aws_launch_template" "app" {
     chmod 666 /var/run/docker.sock
     
     # Login to ECR
-    aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin 011528268572.dkr.ecr.eu-north-1.amazonaws.com/simple-website
+    aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin ${var.aws_account_id}.dkr.ecr.eu-north-1.amazonaws.com/simple-website
     
     # Pull and run your application with environment variables
-    docker pull 011528268572.dkr.ecr.eu-north-1.amazonaws.com/simple-website:latest
+    docker pull ${var.aws_account_id}.dkr.ecr.eu-north-1.amazonaws.com/simple-website:latest
     docker run -d -p 3000:3000 \
       -e DB_HOST="${aws_db_instance.mysql.endpoint}" \
       -e DB_USER="${jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["username"]}" \
       -e DB_PASSWORD="${jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["password"]}" \
       -e DB_NAME="${aws_db_instance.mysql.db_name}" \
-      011528268572.dkr.ecr.eu-north-1.amazonaws.com/simple-website:latest
+      ${var.aws_account_id}.dkr.ecr.eu-north-1.amazonaws.com/simple-website:latest
     EOF
   )
 

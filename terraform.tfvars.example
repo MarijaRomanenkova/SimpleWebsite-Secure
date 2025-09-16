@@ -1,0 +1,4 @@
+# Copy this file to terraform.tfvars and fill in your values
+vpc_cidr      = "10.0.0.0/16"
+environment   = "production"
+aws_account_id = "YOUR_AWS_ACCOUNT_ID"

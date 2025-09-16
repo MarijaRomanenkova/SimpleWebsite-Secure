@@ -10,6 +10,12 @@ variable "environment" {
   default     = "dev"
 }
 
+variable "aws_account_id" {
+  description = "AWS Account ID"
+  type        = string
+  sensitive   = true
+}
+
 locals {
   common_tags = {
     Environment = var.environment

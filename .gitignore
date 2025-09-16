@@ -4,6 +4,7 @@ reqs.md
 presentation_outline.md
 presentation_details.md
 *.md
+terraform.tfvars
 
 # Local .terraform directories
 **/.terraform/*
