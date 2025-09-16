@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Submitted Messages</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .message { 
+            border: 1px solid #ddd; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 5px;
+        }
+        .email { color: #666; }
+        .date { color: #999; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>Submitted Messages</h1>
+    <div id="messages"></div>
+
+    <script>
+        async function loadMessages() {
+            try {
+                const response = await fetch('/messages');
+                const data = await response.json();
+                
+                if (data.success) {
+                    const messagesDiv = document.getElementById('messages');
+                    data.messages.forEach(msg => {
+                        const date = new Date(msg.created_at).toLocaleString();
+                        messagesDiv.innerHTML += `
+                            <div class="message">
+                                <strong>${msg.name}</strong>
+                                <div class="email">${msg.email}</div>
+                                <p>${msg.inquiry}</p>
+                                <div class="date">${date}</div>
+                            </div>
+                        `;
+                    });
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('messages').innerHTML = 
+                    '<p style="color: red;">Error loading messages</p>';
+            }
+        }
+
+        loadMessages();
+    </script>
+</body>
+</html> 
