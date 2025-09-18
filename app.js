@@ -4,38 +4,65 @@ import { fileURLToPath } from "url";
 import path from "path";
 import mysql from 'mysql2/promise';
 
-// Resolve __dirname for ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const MAX_RETRIES = 5;
-const RETRY_DELAY = 5000; // 5 seconds
+const MAX_RETRIES = 10;
+const RETRY_DELAY = 10000;
+
+let db = null;
+let dbConnected = false;
+let dbConnectionAttempts = 0;
+
+console.log('=== ENVIRONMENT VARIABLES DEBUG ===');
+console.log('DB_HOST:', process.env.DB_HOST);
+console.log('DB_USER:', process.env.DB_USER);
+console.log('DB_PASSWORD:', process.env.DB_PASSWORD ? '[SET]' : '[NOT SET]');
+console.log('DB_NAME:', process.env.DB_NAME);
+console.log('=====================================');
 
 async function connectWithRetry(retries = MAX_RETRIES) {
   try {
+    dbConnectionAttempts++;
+    console.log(`Database connection attempt ${dbConnectionAttempts}...`);
+    console.log(`Connecting to: ${process.env.DB_HOST}:3306`);
+    console.log(`Database: ${process.env.DB_NAME}`);
+    console.log(`User: ${process.env.DB_USER}`);
+    
     const connection = await mysql.createConnection({
       host: process.env.DB_HOST,
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME
+      database: process.env.DB_NAME,
+      connectTimeout: 15000,
+      acquireTimeout: 15000,
+      timeout: 15000
     });
+    
     console.log('Successfully connected to MySQL');
+    dbConnected = true;
+    db = connection;
+    
+    await initializeDatabase();
     return connection;
   } catch (err) {
+    console.error(`MySQL connection failed (attempt ${dbConnectionAttempts}): ${err.message}`);
+    console.error(`Error code: ${err.code}`);
+    console.error(`Error errno: ${err.errno}`);
     if (retries > 0) {
-      console.log(`MySQL connection failed, retrying... (${retries} attempts left)`);
+      console.log(`Retrying in ${RETRY_DELAY/1000} seconds... (${retries} attempts left)`);
       await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       return connectWithRetry(retries - 1);
     }
-    console.error('MySQL connection failed after all retries:', err);
-    throw err;
+    console.error('MySQL connection failed after all retries. App will continue without database.');
+    dbConnected = false;
+    return null;
   }
 }
 
-// Add this after your database connection setup
 async function initializeDatabase() {
   try {
     console.log('Initializing database...');
@@ -58,11 +85,10 @@ async function initializeDatabase() {
   }
 }
 
-// Use it in your app
-const db = await connectWithRetry();
-await initializeDatabase();
-
 app.use(cors());
+app.use(express.json({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ 
@@ -71,80 +97,246 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.use(express.json({ extended: true }));
-
-// Serve static files (CSS, JS, etc.)
-app.use(express.static(path.join(__dirname, 'public')));
-
-app.get("/inquiries", async (req, res) => {
-  const [data] = await db.query("SELECT * FROM inquiries");
-  res.send(data);
-});
-
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-app.get('/test-db', async (req, res) => {
+app.get('/health', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT 1');
-    res.send('Database connection is working');
+    if (dbConnected && db) {
+      await db.query('SELECT 1');
+      res.status(200).json({ 
+        status: 'healthy', 
+        database: 'connected',
+        attempts: dbConnectionAttempts,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(200).json({ 
+        status: 'healthy', 
+        database: 'disconnected',
+        attempts: dbConnectionAttempts,
+        message: 'Database connection in progress',
+        timestamp: new Date().toISOString()
+      });
+    }
   } catch (error) {
-    console.error('Error connecting to the database:', error);
-    res.status(500).send('Database connection failed');
+    res.status(200).json({ 
+      status: 'healthy', 
+      database: 'error',
+      attempts: dbConnectionAttempts,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
-app.post("/inquiries/", async (req, res) => {
-  const { name, email, inquiry} = req.body;
+app.get('/debug', (req, res) => {
+  res.json({
+    env_vars: {
+      DB_HOST: process.env.DB_HOST,
+      DB_USER: process.env.DB_USER,
+      DB_PASSWORD: process.env.DB_PASSWORD ? '[SET]' : '[NOT SET]',
+      DB_NAME: process.env.DB_NAME
+    },
+    db_status: {
+      connected: dbConnected,
+      attempts: dbConnectionAttempts
+    }
+  });
+});
 
-  if (!name || !email || !inquiry) {
-    return res.status(400).send("Please provide a name, email, and content");
+app.get('/test-connection', async (req, res) => {
+  try {
+    console.log('Testing database connection...');
+    const connection = await mysql.createConnection({
+      host: process.env.DB_HOST,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      connectTimeout: 5000
+    });
+    
+    await connection.query('SELECT 1');
+    await connection.end();
+    
+    res.json({ 
+      status: 'success', 
+      message: 'Database connection test successful (without database name)' 
+    });
+  } catch (error) {
+    console.error('Database connection test failed:', error);
+    res.json({ 
+      status: 'error', 
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState
+    });
+  }
+});
+
+app.get('/test-db-creation', async (req, res) => {
+  try {
+    console.log('Testing database creation...');
+    const connection = await mysql.createConnection({
+      host: process.env.DB_HOST,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      connectTimeout: 5000
+    });
+    
+    await connection.query(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME}`);
+    await connection.query(`USE ${process.env.DB_NAME}`);
+    await connection.query('SELECT 1');
+    await connection.end();
+    
+    res.json({ 
+      status: 'success', 
+      message: 'Database creation and connection test successful' 
+    });
+  } catch (error) {
+    console.error('Database creation test failed:', error);
+    res.json({ 
+      status: 'error', 
+      message: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState
+    });
+  }
+});
+
+app.get("/inquiries", async (req, res) => {
+  if (!dbConnected || !db) {
+    return res.status(503).json({ 
+      error: 'Database not available',
+      message: 'Database connection is being established. Please try again in a few moments.',
+      attempts: dbConnectionAttempts
+    });
+  }
+  
+  try {
+    const [data] = await db.query("SELECT * FROM inquiries ORDER BY created_at DESC");
+    res.json(data);
+  } catch (error) {
+    console.error('Database query error:', error);
+    res.status(500).json({ error: 'Database query failed' });
+  }
+});
+
+app.post("/inquiries", async (req, res) => {
+  if (!dbConnected || !db) {
+    return res.status(503).json({ 
+      error: 'Database not available',
+      message: 'Database connection is being established. Your message will be saved once the connection is ready.',
+      attempts: dbConnectionAttempts
+    });
   }
 
-  
+  const { name, email, inquiry } = req.body;
+
+  if (!name || !email || !inquiry) {
+    return res.status(400).json({ 
+      error: "Missing required fields",
+      message: "Please provide name, email, and inquiry"
+    });
+  }
 
   try {
     const [result] = await db.execute(
       "INSERT INTO inquiries (name, email, inquiry) VALUES (?,?,?)",
       [name, email, inquiry]
     );
-    res.send({ success: result.affectedRows > 0 });
+    res.json({ 
+      success: result.affectedRows > 0,
+      message: "Your message has been saved successfully!"
+    });
   } catch (error) {
-    console.error("Database query error:", error); // More detailed error logging
-    res.status(500).send({ error: "Database query failed", message: error.message });
+    console.error("Database query error:", error);
+    res.status(500).json({ 
+      error: "Database query failed", 
+      message: error.message 
+    });
   }
 });
 
+app.get('/test-db', async (req, res) => {
+  if (!dbConnected || !db) {
+    return res.status(503).json({ 
+      status: 'Database not available',
+      message: 'Connection will be retried automatically',
+      attempts: dbConnectionAttempts
+    });
+  }
+  
+  try {
+    const [rows] = await db.query('SELECT 1');
+    res.json({ 
+      status: 'Database connection is working',
+      attempts: dbConnectionAttempts,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error connecting to the database:', error);
+    res.status(500).json({ 
+      status: 'Database connection failed',
+      attempts: dbConnectionAttempts,
+      error: error.message
+    });
+  }
+});
 
 app.patch("/inquiries/:id", async (req, res) => {
+  if (!dbConnected || !db) {
+    return res.status(503).json({ 
+      error: 'Database not available',
+      message: 'Please try again later'
+    });
+  }
+
   const { id } = req.params;
   const { name } = req.body;
-  if (isNaN(id) || !name) return res.status(400).send("Bad request");
+  if (isNaN(id) || !name) return res.status(400).json({ error: "Bad request" });
 
-  const [data] = await db.execute("UPDATE inquiries SET name = ? WHERE id = ?", [
-    name,
-    id,
-  ]);
-  res.send({ success: data.affectedRows > 0 });
+  try {
+    const [data] = await db.execute("UPDATE inquiries SET name = ? WHERE id = ?", [
+      name,
+      id,
+    ]);
+    res.json({ success: data.affectedRows > 0 });
+  } catch (error) {
+    console.error("Database query error:", error);
+    res.status(500).json({ error: "Database query failed", message: error.message });
+  }
 });
 
 app.delete("/inquiries/:id", async (req, res) => {
-  const { id } = req.params;
-  const [data] = await db.execute("DELETE FROM inquiries WHERE id=?", [id]);
-  res.send({ success: data.affectedRows > 0 });
-});
+  if (!dbConnected || !db) {
+    return res.status(503).json({ 
+      error: 'Database not available',
+      message: 'Please try again later'
+    });
+  }
 
-app.get('/health', async (req, res) => {
+  const { id } = req.params;
   try {
-    await db.query('SELECT 1');
-    res.status(200).json({ status: 'healthy' });
+    const [data] = await db.execute("DELETE FROM inquiries WHERE id=?", [id]);
+    res.json({ success: data.affectedRows > 0 });
   } catch (error) {
-    res.status(500).json({ status: 'unhealthy', error: error.message });
+    console.error("Database query error:", error);
+    res.status(500).json({ error: "Database query failed", message: error.message });
   }
 });
 
 app.get("/messages", async (req, res) => {
+  if (!dbConnected || !db) {
+    return res.status(503).json({ 
+      success: false,
+      error: "Database not available",
+      message: "Please try again later"
+    });
+  }
+
   try {
     const [rows] = await db.execute("SELECT * FROM inquiries ORDER BY created_at DESC");
     res.json({
@@ -160,10 +352,32 @@ app.get("/messages", async (req, res) => {
   }
 });
 
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received, shutting down gracefully");
+  if (db) {
+    await db.end();
+  }
+  process.exit(0);
+});
+
+process.on("SIGINT", async () => {
+  console.log("SIGINT received, shutting down gracefully");
+  if (db) {
+    await db.end();
+  }
+  process.exit(0);
+});
+
 process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log(`Database status: ${dbConnected ? 'Connected' : 'Disconnected'}`);
+  
+  setTimeout(() => {
+    console.log('Starting database connection in background...');
+    connectWithRetry();
+  }, 2000);
 });

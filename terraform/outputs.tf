@@ -27,3 +27,8 @@ output "db_secret_name" {
   description = "The name of the database credentials secret"
   value       = aws_secretsmanager_secret.db_credentials.name
 }
+
+output "aws_region" {
+  description = "The AWS region used for deployment"
+  value       = var.aws_region
+}

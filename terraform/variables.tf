@@ -16,6 +16,12 @@ variable "aws_account_id" {
   sensitive   = true
 }
 
+variable "aws_region" {
+  description = "AWS Region"
+  type        = string
+  default     = "eu-north-1"
+}
+
 locals {
   common_tags = {
     Environment = var.environment

@@ -10,7 +10,7 @@ terraform {
 
 # Configure AWS Provider
 provider "aws" {
-  region = "eu-north-1" # Stockholm region
+  region = var.aws_region
 }
 
 # VPC and Networking
@@ -24,11 +24,16 @@ resource "aws_vpc" "main" {
   }
 }
 
+# Get availability zones for the region
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
 # Public Subnets
 resource "aws_subnet" "public_1" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
-  availability_zone       = "eu-north-1a"
+  availability_zone       = data.aws_availability_zones.available.names[0]
   map_public_ip_on_launch = true
 
   tags = {
@@ -39,7 +44,7 @@ resource "aws_subnet" "public_1" {
 resource "aws_subnet" "public_2" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.2.0/24"
-  availability_zone       = "eu-north-1b"
+  availability_zone       = data.aws_availability_zones.available.names[1]
   map_public_ip_on_launch = true
 
   tags = {
@@ -51,7 +56,7 @@ resource "aws_subnet" "public_2" {
 resource "aws_subnet" "private_1" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.3.0/24"
-  availability_zone = "eu-north-1a"
+  availability_zone = data.aws_availability_zones.available.names[0]
 
   tags = {
     Name = "private-1"
@@ -61,7 +66,7 @@ resource "aws_subnet" "private_1" {
 resource "aws_subnet" "private_2" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.4.0/24"
-  availability_zone = "eu-north-1b"
+  availability_zone = data.aws_availability_zones.available.names[1]
 
   tags = {
     Name = "private-2"
@@ -168,7 +173,7 @@ resource "aws_secretsmanager_secret" "db_credentials" {
 resource "aws_secretsmanager_secret_version" "db_credentials" {
   secret_id = aws_secretsmanager_secret.db_credentials.id
   secret_string = jsonencode({
-    username = "dbadmin"
+    username = "root"
     password = random_password.db_password.result
   })
 }
@@ -223,39 +228,17 @@ resource "aws_launch_template" "app" {
   }
 
   network_interfaces {
-    associate_public_ip_address = true
+    associate_public_ip_address = false
     security_groups             = [aws_security_group.app_sg.id]
   }
 
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-    # Install Docker
-    yum update -y
-    yum install -y docker
-    
-    # Start Docker service
-    systemctl start docker
-    systemctl enable docker
-    
-    # Add ec2-user to docker group
-    usermod -aG docker ec2-user
-    
-    # Set Docker permissions
-    chmod 666 /var/run/docker.sock
-    
-    # Login to ECR
-    aws ecr get-login-password --region eu-north-1 | docker login --username AWS --password-stdin ${var.aws_account_id}.dkr.ecr.eu-north-1.amazonaws.com/simple-website
-    
-    # Pull and run your application with environment variables
-    docker pull ${var.aws_account_id}.dkr.ecr.eu-north-1.amazonaws.com/simple-website:latest
-    docker run -d -p 3000:3000 \
-      -e DB_HOST="${aws_db_instance.mysql.endpoint}" \
-      -e DB_USER="${jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["username"]}" \
-      -e DB_PASSWORD="${jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["password"]}" \
-      -e DB_NAME="${aws_db_instance.mysql.db_name}" \
-      ${var.aws_account_id}.dkr.ecr.eu-north-1.amazonaws.com/simple-website:latest
-    EOF
-  )
+  user_data = base64encode(templatefile("${path.module}/user-data.sh", {
+    aws_account_id = var.aws_account_id
+    db_endpoint    = aws_db_instance.mysql.address
+    db_username    = jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["username"]
+    db_password    = jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["password"]
+    db_name        = aws_db_instance.mysql.db_name
+  }))
 
   tags = {
     Name = "App Launch Template"
@@ -268,7 +251,7 @@ resource "aws_autoscaling_group" "app" {
   max_size            = 10
   min_size            = 1
   target_group_arns   = [aws_lb_target_group.app.arn]
-  vpc_zone_identifier = [aws_subnet.public_1.id, aws_subnet.public_2.id]
+  vpc_zone_identifier = [aws_subnet.private_1.id, aws_subnet.private_2.id]
 
   launch_template {
     id      = aws_launch_template.app.id
@@ -302,7 +285,7 @@ resource "aws_lb" "app" {
 
 # ALB Target Group
 resource "aws_lb_target_group" "app" {
-  name     = "app-target-group"
+  name     = "app-target-group-v3"
   port     = 3000
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
@@ -314,6 +297,10 @@ resource "aws_lb_target_group" "app" {
     timeout             = 5
     interval            = 10
     matcher             = "200"
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
@@ -425,7 +412,7 @@ resource "aws_iam_role" "xray_role" {
 }
 
 resource "aws_iam_role_policy_attachment" "xray_policy" {
-  role       = aws_iam_role.xray_role.name
+  role       = aws_iam_role.ec2_role.name
   policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
 }
 
@@ -472,24 +459,7 @@ resource "aws_iam_role" "ec2_role" {
   })
 }
 
-# IAM Policy for Secrets Manager access
-resource "aws_iam_role_policy" "secrets_access" {
-  name = "secrets-access"
-  role = aws_iam_role.ec2_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue"
-        ]
-        Resource = [aws_secretsmanager_secret.db_credentials.arn]
-      }
-    ]
-  })
-}
+# Secrets Manager access is handled by ec2_policy below
 
 # Create instance profile
 resource "aws_iam_instance_profile" "ec2_profile" {
