@@ -37,9 +37,13 @@ async function connectWithRetry(retries = MAX_RETRIES) {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
-      connectTimeout: 15000,
-      acquireTimeout: 15000,
-      timeout: 15000
+      connectTimeout: 10000,  // Reduced timeout
+      acquireTimeout: 10000,
+      timeout: 10000,
+      // Add connection pool settings
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0
     });
     
     console.log('Successfully connected to MySQL');
@@ -52,13 +56,16 @@ async function connectWithRetry(retries = MAX_RETRIES) {
     console.error(`MySQL connection failed (attempt ${dbConnectionAttempts}): ${err.message}`);
     console.error(`Error code: ${err.code}`);
     console.error(`Error errno: ${err.errno}`);
+    
     if (retries > 0) {
       console.log(`Retrying in ${RETRY_DELAY/1000} seconds... (${retries} attempts left)`);
       await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       return connectWithRetry(retries - 1);
     }
+    
     console.error('MySQL connection failed after all retries. App will continue without database.');
     dbConnected = false;
+    db = null;
     return null;
   }
 }
@@ -99,6 +106,19 @@ app.use((err, req, res, next) => {
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// Simple startup endpoint for debugging
+app.get("/status", (req, res) => {
+  res.status(200).json({
+    status: 'running',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: {
+      PORT: process.env.PORT,
+      NODE_ENV: process.env.NODE_ENV || 'development'
+    }
+  });
 });
 
 app.get('/health', async (req, res) => {
@@ -372,12 +392,31 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on port ${PORT} on all interfaces (0.0.0.0)`);
   console.log(`Database status: ${dbConnected ? 'Connected' : 'Disconnected'}`);
   
-  setTimeout(() => {
-    console.log('Starting database connection in background...');
-    connectWithRetry();
+  // Start database connection in background without blocking
+  setTimeout(async () => {
+    try {
+      console.log('Starting database connection in background...');
+      await connectWithRetry();
+    } catch (error) {
+      console.error('Failed to start database connection:', error.message);
+    }
   }, 2000);
+});
+
+// Handle server startup errors
+app.on('error', (err) => {
+  console.error('Server error:', err);
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use`);
+  }
+});
+
+// Ensure the server doesn't crash on uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  // Don't exit the process, just log the error
 });

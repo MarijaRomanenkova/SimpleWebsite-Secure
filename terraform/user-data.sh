@@ -9,6 +9,10 @@ systemctl start docker
 systemctl enable docker
 usermod -a -G docker ec2-user
 
+# Install Docker Compose
+curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-Linux-x86_64" -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+
 # Install AWS CLI v2
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
@@ -18,14 +22,23 @@ rm -rf awscliv2.zip aws
 # Install jq for JSON parsing
 yum install -y jq
 
-# Get AWS region
-REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+# Get AWS region with fallback
+REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region 2>/dev/null)
+if [ -z "$REGION" ]; then
+    # Fallback to hardcoded region
+    REGION="eu-north-1"
+    echo "Failed to get region from metadata, using fallback: $REGION"
+else
+    echo "Detected AWS region: $REGION"
+fi
 
-# Get ECR repository URL
-ECR_REPO=$(aws ecr describe-repositories --region $REGION --repository-names simple-website --query 'repositories[0].repositoryUri' --output text)
+# Use hardcoded ECR URL to avoid AWS CLI issues
+ECR_REPO="011528268572.dkr.ecr.$REGION.amazonaws.com/simple-website"
+echo "Using ECR Repository URL: $ECR_REPO"
 
-# Login to ECR
-aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REPO
+# Login to ECR with proper region handling
+echo "Logging into ECR..."
+aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_REPO"
 
 # Create application directory
 mkdir -p /opt/app
@@ -35,14 +48,13 @@ cd /opt/app
 cat > .env << EOF
 DB_HOST=${db_endpoint}
 DB_USER=${db_username}
-DB_PASSWORD=${db_password}
+DB_PASSWORD="${db_password}"
 DB_NAME=${db_name}
 PORT=3000
 EOF
 
 # Create Docker Compose file
 cat > docker-compose.yml << EOF
-version: '3.8'
 services:
   app:
     image: $ECR_REPO:latest
@@ -59,17 +71,39 @@ services:
       start_period: 40s
 EOF
 
+# Debug: Print environment variables and docker-compose file
+echo "=== Environment Variables ==="
+cat .env
+echo "=== Docker Compose File ==="
+cat docker-compose.yml
+
+# Pull the image first to check if it exists
+echo "Pulling Docker image..."
+docker pull "$ECR_REPO:latest"
+
 # Start the application
+echo "Starting application with docker-compose..."
 docker-compose up -d
 
 # Wait for application to start
 sleep 30
 
 # Check if application is running
+echo "=== Docker Compose Status ==="
+docker-compose ps
+
+echo "=== Docker Images ==="
+docker images
+
+echo "=== Testing local endpoints ==="
+curl -f http://localhost:3000/status || echo "Status endpoint failed"
+curl -f http://localhost:3000/health || echo "Health endpoint failed"
+
 if docker-compose ps | grep -q "Up"; then
     echo "Application started successfully"
 else
     echo "Application failed to start"
+    echo "Docker Compose Logs:"
     docker-compose logs
 fi
 
