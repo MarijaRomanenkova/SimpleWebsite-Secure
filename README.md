@@ -108,19 +108,6 @@ Visit the URL in your browser to see your deployed application!
 ./check-deployment.sh
 ```
 
-### Manual Verification
-Check AWS Console for:
-- EC2 instances running
-- RDS database accessible
-- Application Load Balancer healthy
-- CloudFront distribution deployed
-
-### Quick Health Check
-```bash
-# Test if your application is accessible
-curl -I $(cd terraform && terraform output -raw cloudfront_url)
-```
-
 
 ## 📁 Project Structure
 

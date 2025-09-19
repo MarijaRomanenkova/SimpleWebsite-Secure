@@ -9,6 +9,10 @@ systemctl start docker
 systemctl enable docker
 usermod -a -G docker ec2-user
 
+# Install Docker Compose
+curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-Linux-x86_64" -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+
 # Install AWS CLI v2
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
@@ -35,52 +39,43 @@ cd /opt/app
 cat > .env << EOF
 DB_HOST=${db_endpoint}
 DB_USER=${db_username}
-DB_PASSWORD=${db_password}
+DB_PASSWORD="${db_password}"
 DB_NAME=${db_name}
 PORT=3000
 EOF
 
-# Create Docker Compose file
-cat > docker-compose.yml << EOF
-version: '3.8'
-services:
-  app:
-    image: $ECR_REPO:latest
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-EOF
-
-# Start the application
-docker-compose up -d
+# Start the application directly with Docker
+docker run -d \
+  --name simple-website \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  --env-file .env \
+  $ECR_REPO:latest
 
 # Wait for application to start
 sleep 30
 
 # Check if application is running
-if docker-compose ps | grep -q "Up"; then
+if docker ps | grep -q "simple-website"; then
     echo "Application started successfully"
 else
     echo "Application failed to start"
-    docker-compose logs
+    docker logs simple-website
 fi
 
 # Create a script to retry pulling the image if it fails
 cat > /opt/app/retry-pull.sh << 'EOF'
 #!/bin/bash
 while true; do
-    if ! docker-compose ps | grep -q "Up"; then
+    if ! docker ps | grep -q "simple-website"; then
         echo "$(date): Application not running, retrying..."
-        docker-compose pull
-        docker-compose up -d
+        docker pull $ECR_REPO:latest
+        docker run -d \
+          --name simple-website \
+          --restart unless-stopped \
+          -p 3000:3000 \
+          --env-file .env \
+          $ECR_REPO:latest
         sleep 30
     else
         echo "$(date): Application is running"
