@@ -4,8 +4,8 @@
 set -e
 
 REFRESH_ID="56d8afb1-398f-4af3-b51e-c4d2ecf4508f"
-ASG_NAME="terraform-20250919090737026400000006"
-TARGET_GROUP_ARN="arn:aws:elasticloadbalancing:eu-north-1:011528268572:targetgroup/app-target-group-v3/59f05debaab0e911"
+ASG_NAME=$(cd terraform && terraform output -raw asg_name 2>/dev/null || echo "terraform-20250919090737026400000006")
+TARGET_GROUP_ARN=$(cd terraform && terraform output -raw target_group_arn 2>/dev/null || echo "arn:aws:elasticloadbalancing:eu-north-1:011528268572:targetgroup/app-target-group-v3/59f05debaab0e911")
 
 echo "🔄 Monitoring instance refresh progress..."
 echo "Refresh ID: $REFRESH_ID"

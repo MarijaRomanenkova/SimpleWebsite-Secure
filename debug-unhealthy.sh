@@ -3,9 +3,12 @@
 echo "🔍 COMPREHENSIVE DEBUGGING OF UNHEALTHY INSTANCES"
 echo "=================================================="
 
+# Get the Auto Scaling Group name from Terraform output
+ASG_NAME=$(cd terraform && terraform output -raw asg_name 2>/dev/null || echo "terraform-20250919113456709500000006")
+
 # Get the latest instance ID
 INSTANCE_ID=$(aws ec2 describe-instances \
-  --filters "Name=tag:aws:autoscaling:groupName,Values=terraform-20250919113456709500000006" \
+  --filters "Name=tag:aws:autoscaling:groupName,Values=$ASG_NAME" \
   --query 'Reservations[*].Instances[*].[InstanceId,LaunchTime]' \
   --output text | sort -k2 | tail -1 | awk '{print $1}')
 
@@ -27,7 +30,8 @@ echo ""
 # 3. Check target group health
 echo "🎯 3. TARGET GROUP HEALTH:"
 echo "------------------------"
-aws elbv2 describe-target-health --target-group-arn arn:aws:elasticloadbalancing:eu-north-1:011528268572:targetgroup/app-target-group-v3/6143cb5d48374a8d --query 'TargetHealthDescriptions[*].{Target:Target.Id,State:TargetHealth.State,Reason:TargetHealth.Reason}' --output table
+TARGET_GROUP_ARN=$(cd terraform && terraform output -raw target_group_arn 2>/dev/null || echo "arn:aws:elasticloadbalancing:eu-north-1:011528268572:targetgroup/app-target-group-v3/6143cb5d48374a8d")
+aws elbv2 describe-target-health --target-group-arn $TARGET_GROUP_ARN --query 'TargetHealthDescriptions[*].{Target:Target.Id,State:TargetHealth.State,Reason:TargetHealth.Reason}' --output table
 echo ""
 
 # 4. Try to run commands via Systems Manager
@@ -74,14 +78,15 @@ fi
 echo ""
 echo "🔧 5. ALB HEALTH CHECK CONFIGURATION:"
 echo "------------------------------------"
-aws elbv2 describe-target-groups --target-group-arns arn:aws:elasticloadbalancing:eu-north-1:011528268572:targetgroup/app-target-group-v3/6143cb5d48374a8d --query 'TargetGroups[*].HealthCheck' --output table
+aws elbv2 describe-target-groups --target-group-arns $TARGET_GROUP_ARN --query 'TargetGroups[*].HealthCheck' --output table
 
 echo ""
 echo "🌐 6. TESTING LOAD BALANCER DIRECTLY:"
 echo "------------------------------------"
+ALB_DNS=$(cd terraform && terraform output -raw alb_dns_name 2>/dev/null || echo "app-load-balancer-1386763610.eu-north-1.elb.amazonaws.com")
 echo "Testing ALB endpoint:"
-curl -v --max-time 10 http://app-load-balancer-1386763610.eu-north-1.elb.amazonaws.com/status 2>&1 | head -20
+curl -v --max-time 10 http://$ALB_DNS/status 2>&1 | head -20
 
 echo ""
 echo "Testing health endpoint:"
-curl -v --max-time 10 http://app-load-balancer-1386763610.eu-north-1.elb.amazonaws.com/health 2>&1 | head -20
+curl -v --max-time 10 http://$ALB_DNS/health 2>&1 | head -20

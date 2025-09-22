@@ -4,7 +4,6 @@ Dockerfile
 .dockerignore
 .git
 .gitignore
-README.md
 .env
 terraform/
 .terraform/
@@ -15,4 +14,3 @@ terraform.tfvars.example
 deploy-*.sh
 check-deployment.sh
 AWS-VERIFICATION-CHECKLIST.md
-*.md

@@ -14,7 +14,8 @@ aws ec2 describe-instances --instance-ids $INSTANCE_1 $INSTANCE_2 --query 'Reser
 
 echo ""
 echo "🏥 Target Group Health:"
-aws elbv2 describe-target-health --target-group-arn arn:aws:elasticloadbalancing:eu-north-1:011528268572:targetgroup/app-target-group-v3/59f05debaab0e911
+TARGET_GROUP_ARN=$(cd terraform && terraform output -raw target_group_arn 2>/dev/null || echo "arn:aws:elasticloadbalancing:eu-north-1:011528268572:targetgroup/app-target-group-v3/59f05debaab0e911")
+aws elbv2 describe-target-health --target-group-arn $TARGET_GROUP_ARN
 
 echo ""
 echo "📊 Auto Scaling Group Status:"

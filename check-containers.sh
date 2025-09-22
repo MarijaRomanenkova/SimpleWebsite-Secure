@@ -2,9 +2,12 @@
 
 echo "🔍 Checking container status on EC2 instances..."
 
+# Get the Auto Scaling Group name from Terraform output
+ASG_NAME=$(cd terraform && terraform output -raw asg_name 2>/dev/null || echo "terraform-20250919113456709500000006")
+
 # Get the latest instance ID
 INSTANCE_ID=$(aws ec2 describe-instances \
-  --filters "Name=tag:aws:autoscaling:groupName,Values=terraform-20250919113456709500000006" \
+  --filters "Name=tag:aws:autoscaling:groupName,Values=$ASG_NAME" \
   --query 'Reservations[*].Instances[*].[InstanceId,LaunchTime]' \
   --output text | sort -k2 | tail -1 | awk '{print $1}')
 

@@ -25,15 +25,15 @@ yum install -y jq
 # Get AWS region with fallback
 REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region 2>/dev/null)
 if [ -z "$REGION" ]; then
-    # Fallback to hardcoded region
-    REGION="eu-north-1"
-    echo "Failed to get region from metadata, using fallback: $REGION"
+    # Fallback to region from Terraform
+    REGION="${aws_region}"
+    echo "Failed to get region from metadata, using Terraform region: $REGION"
 else
     echo "Detected AWS region: $REGION"
 fi
 
-# Use hardcoded ECR URL to avoid AWS CLI issues
-ECR_REPO="011528268572.dkr.ecr.$REGION.amazonaws.com/simple-website"
+# Use ECR URL with account ID from Terraform
+ECR_REPO="${aws_account_id}.dkr.ecr.$REGION.amazonaws.com/simple-website"
 echo "Using ECR Repository URL: $ECR_REPO"
 
 # Login to ECR with proper region handling
@@ -50,7 +50,7 @@ DB_HOST=${db_endpoint}
 DB_USER=${db_username}
 DB_PASSWORD="${db_password}"
 DB_NAME=${db_name}
-PORT=3000
+PORT=${app_port}
 EOF
 
 # Create Docker Compose file
@@ -59,12 +59,12 @@ services:
   app:
     image: $ECR_REPO:latest
     ports:
-      - "3000:3000"
+      - "${app_port}:${app_port}"
     env_file:
       - .env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${app_port}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -96,8 +96,8 @@ echo "=== Docker Images ==="
 docker images
 
 echo "=== Testing local endpoints ==="
-curl -f http://localhost:3000/status || echo "Status endpoint failed"
-curl -f http://localhost:3000/health || echo "Health endpoint failed"
+curl -f http://localhost:${app_port}/status || echo "Status endpoint failed"
+curl -f http://localhost:${app_port}/health || echo "Health endpoint failed"
 
 if docker-compose ps | grep -q "Up"; then
     echo "Application started successfully"

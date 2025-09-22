@@ -32,3 +32,18 @@ output "aws_region" {
   description = "The AWS region used for deployment"
   value       = var.aws_region
 }
+
+output "asg_name" {
+  description = "The name of the Auto Scaling Group"
+  value       = aws_autoscaling_group.app.name
+}
+
+output "target_group_arn" {
+  description = "The ARN of the Application Load Balancer target group"
+  value       = aws_lb_target_group.app.arn
+}
+
+output "ssh_key_name" {
+  description = "The name of the SSH key pair created in AWS"
+  value       = aws_key_pair.app_key.key_name
+}
