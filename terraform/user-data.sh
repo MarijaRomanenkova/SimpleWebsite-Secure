@@ -22,14 +22,23 @@ rm -rf awscliv2.zip aws
 # Install jq for JSON parsing
 yum install -y jq
 
-# Get AWS region
-REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+# Get AWS region with fallback
+REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region 2>/dev/null)
+if [ -z "$REGION" ]; then
+    # Fallback to region from Terraform
+    REGION="${aws_region}"
+    echo "Failed to get region from metadata, using Terraform region: $REGION"
+else
+    echo "Detected AWS region: $REGION"
+fi
 
-# Get ECR repository URL
-ECR_REPO=$(aws ecr describe-repositories --region $REGION --repository-names simple-website --query 'repositories[0].repositoryUri' --output text)
+# Use ECR URL with account ID from Terraform
+ECR_REPO="${aws_account_id}.dkr.ecr.$REGION.amazonaws.com/simple-website"
+echo "Using ECR Repository URL: $ECR_REPO"
 
-# Login to ECR
-aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REPO
+# Login to ECR with proper region handling
+echo "Logging into ECR..."
+aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ECR_REPO"
 
 # Create application directory
 mkdir -p /opt/app
@@ -41,41 +50,71 @@ DB_HOST=${db_endpoint}
 DB_USER=${db_username}
 DB_PASSWORD="${db_password}"
 DB_NAME=${db_name}
-PORT=3000
+PORT=${app_port}
 EOF
 
-# Start the application directly with Docker
-docker run -d \
-  --name simple-website \
-  --restart unless-stopped \
-  -p 3000:3000 \
-  --env-file .env \
-  $ECR_REPO:latest
+# Create Docker Compose file
+cat > docker-compose.yml << EOF
+services:
+  app:
+    image: $ECR_REPO:latest
+    ports:
+      - "${app_port}:${app_port}"
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${app_port}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+EOF
+
+# Debug: Print environment variables and docker-compose file
+echo "=== Environment Variables ==="
+cat .env
+echo "=== Docker Compose File ==="
+cat docker-compose.yml
+
+# Pull the image first to check if it exists
+echo "Pulling Docker image..."
+docker pull "$ECR_REPO:latest"
+
+# Start the application
+echo "Starting application with docker-compose..."
+docker-compose up -d
 
 # Wait for application to start
 sleep 30
 
 # Check if application is running
-if docker ps | grep -q "simple-website"; then
+echo "=== Docker Compose Status ==="
+docker-compose ps
+
+echo "=== Docker Images ==="
+docker images
+
+echo "=== Testing local endpoints ==="
+curl -f http://localhost:${app_port}/status || echo "Status endpoint failed"
+curl -f http://localhost:${app_port}/health || echo "Health endpoint failed"
+
+if docker-compose ps | grep -q "Up"; then
     echo "Application started successfully"
 else
     echo "Application failed to start"
-    docker logs simple-website
+    echo "Docker Compose Logs:"
+    docker-compose logs
 fi
 
 # Create a script to retry pulling the image if it fails
 cat > /opt/app/retry-pull.sh << 'EOF'
 #!/bin/bash
 while true; do
-    if ! docker ps | grep -q "simple-website"; then
+    if ! docker-compose ps | grep -q "Up"; then
         echo "$(date): Application not running, retrying..."
-        docker pull $ECR_REPO:latest
-        docker run -d \
-          --name simple-website \
-          --restart unless-stopped \
-          -p 3000:3000 \
-          --env-file .env \
-          $ECR_REPO:latest
+        docker-compose pull
+        docker-compose up -d
         sleep 30
     else
         echo "$(date): Application is running"

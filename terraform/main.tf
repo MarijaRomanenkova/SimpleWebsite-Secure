@@ -105,8 +105,8 @@ resource "aws_security_group" "app_sg" {
 
   # Allow traffic from load balancer
   ingress {
-    from_port       = 3000
-    to_port         = 3000
+    from_port       = var.app_port
+    to_port         = var.app_port
     protocol        = "tcp"
     security_groups = [aws_security_group.alb_sg.id]
   }
@@ -166,7 +166,7 @@ resource "aws_security_group" "alb_sg" {
 
 # AWS Secrets Manager for Database Credentials
 resource "aws_secretsmanager_secret" "db_credentials" {
-  name = "mysql-db-credentials-v3"
+  name = var.db_secret_name
   recovery_window_in_days = 0
 }
 
@@ -204,16 +204,12 @@ resource "tls_private_key" "app_key" {
 
 # Create AWS key pair
 resource "aws_key_pair" "app_key" {
-  key_name   = "app-ssh-key"
+  key_name   = var.ssh_key_name
   public_key = tls_private_key.app_key.public_key_openssh
 }
 
-# Save private key locally
-resource "local_file" "private_key" {
-  content         = tls_private_key.app_key.private_key_pem
-  filename        = "${path.module}/app-ssh-key.pem"
-  file_permission = "0400"
-}
+# Note: Private key is NOT saved locally for security reasons
+# The key pair is created in AWS and can be accessed via AWS Console or CLI if needed
 
 # Launch Template for EC2 Instances
 resource "aws_launch_template" "app" {
@@ -234,6 +230,8 @@ resource "aws_launch_template" "app" {
 
   user_data = base64encode(templatefile("${path.module}/user-data.sh", {
     aws_account_id = var.aws_account_id
+    aws_region     = var.aws_region
+    app_port       = var.app_port
     db_endpoint    = aws_db_instance.mysql.address
     db_username    = jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["username"]
     db_password    = jsondecode(aws_secretsmanager_secret_version.db_credentials.secret_string)["password"]
@@ -286,7 +284,7 @@ resource "aws_lb" "app" {
 # ALB Target Group
 resource "aws_lb_target_group" "app" {
   name     = "app-target-group-v3"
-  port     = 3000
+  port     = var.app_port
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
 
@@ -572,8 +570,8 @@ resource "aws_security_group" "rds_sg" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port       = 3306
-    to_port         = 3306
+    from_port       = var.db_port
+    to_port         = var.db_port
     protocol        = "tcp"
     security_groups = [aws_security_group.app_sg.id]
   }
@@ -592,7 +590,7 @@ resource "aws_security_group" "rds_sg" {
 
 # Add this RDS instance definition
 resource "aws_db_instance" "mysql" {
-  identifier        = "myapp-mysql-db"
+  identifier        = var.rds_instance_identifier
   allocated_storage = 20
   storage_type      = "gp2"
   engine            = "mysql"
