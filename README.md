@@ -20,7 +20,7 @@ Before running this project, ensure you have:
 2. **AWS CLI** installed and configured with your credentials
 3. **Terraform** (v1.0+) installed
 4. **Docker** installed
-5. **Node.js** (v16+) installed (for local development)
+5. **Node.js** (v16+) installed (for local development only)
 6. **Git** installed
 
 ## 🚀 Quick Start
@@ -133,6 +133,5 @@ SimpleWebsite-Secure/
 ├── deploy-infrastructure.sh       # Infrastructure deployment script
 ├── quick-deploy.sh                # Application deployment script
 ├── check-deployment.sh            # AWS verification script
-├── terraform.tfvars.example       # Configuration template
 └── README.md                      # This file
 ```
